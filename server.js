@@ -14,12 +14,10 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-/* ================= MEMORIE TEMPORARĂ ÎN RAM =================
-   Cheia = subiect + titlu + focus
-   Valoarea = ultimele întrebări generate pentru acel context
-*/
+/* ================= MEMORIE TEMPORARĂ ================= */
+
 const recentQuestionsMemory = new Map();
-const MAX_MEMORY_PER_TOPIC = 25;
+const MAX_MEMORY_PER_TOPIC = 20;
 
 /* ================= HELPERS ================= */
 
@@ -126,10 +124,14 @@ function validateAndCleanQuiz(data, requestedCount = 5) {
 function buildPrompt(userText, recentQuestions, requestedCount) {
   const recentBlock = recentQuestions.length
     ? `
-NU repeta sau reformula prea apropiat următoarele întrebări deja folosite recent:
+Întrebări folosite recent pentru același subiect. Nu le repeta identic și nu le reformula prea apropiat:
 ${recentQuestions.map((q, i) => `- ${i + 1}. ${q}`).join("\n")}
+
+Este permisă reluarea moderată a unor idei importante, dar formulată diferit și doar dacă ajută la consolidarea învățării.
 `
-    : `Nu există întrebări anterioare salvate pentru acest subiect.`;
+    : `
+Nu există întrebări anterioare salvate pentru acest subiect.
+`;
 
   return `
 Generează un quiz în limba română și returnează STRICT JSON valid.
@@ -152,20 +154,31 @@ Reguli OBLIGATORII:
 - fiecare întrebare trebuie să aibă exact 4 variante
 - o singură variantă corectă
 - "corect" trebuie să fie doar A, B, C sau D
-- întrebările să fie clare, naturale și fără ambiguitate
-- variantele greșite să fie plauzibile, nu absurde
-- evită întrebările triviale și ultra-evidente
-- amestecă întrebări de definiție, înțelegere și aplicare, dacă subiectul permite
-- nu repeta aceeași idee în mai multe întrebări
-- explicațiile să fie scurte, corecte și utile
-- fără markdown
-- fără blocuri de cod
-- fără text în afara JSON
+- întrebările trebuie să fie corecte factual
+- întrebările trebuie să fie clare, naturale și fără ambiguitate
+- variantele greșite trebuie să fie plauzibile, nu absurde
+- evită întrebările prea triviale și prea evidente
+- explică pe scurt de ce răspunsul corect este corect
+- nu repeta aceeași idee în mai multe întrebări din același quiz
+- dacă subiectul permite, combină:
+  - întrebări de definiție
+  - întrebări de înțelegere
+  - întrebări de aplicare
+- menține dificultatea potrivită cererii utilizatorului
+- dacă utilizatorul cere ceva foarte specific, respectă acea cerință
 
-Reguli de varietate:
-- nu pune toate răspunsurile corecte pe aceeași literă
-- evită două întrebări consecutive aproape identice
-- concentrează-te strict pe materia și cerința utilizatorului
+Reguli de calitate:
+- evită formulările prea lungi
+- evită variante aproape identice între ele
+- evită răspunsuri-capcană prost formulate
+- distribuie răspunsurile corecte variat între A, B, C și D
+- nu pune toate întrebările pe același tipar
+
+Reguli de output:
+- fără markdown
+- fără explicații în afara JSON
+- fără blocuri de cod
+- doar JSON valid
 
 ${recentBlock}
 
