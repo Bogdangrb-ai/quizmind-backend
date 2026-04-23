@@ -1,8 +1,7 @@
 import express from "express";
 import cors from "cors";
-import bodyParser from "body-parser";
-import OpenAI from "openai";
 import dotenv from "dotenv";
+import OpenAI from "openai";
 
 dotenv.config();
 
@@ -14,53 +13,43 @@ app.use(cors({
     "https://grey-pheasant-306609.hostingersite.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000"
-  ],
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type"]
+  ]
 }));
 
-app.options("*", cors());
-
-app.use(bodyParser.json());
+app.use(express.json());
 
 /* ================= OPENAI ================= */
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-/* ================= ROUTES ================= */
-
-// test route
+/* ================= TEST ROUTE ================= */
 app.get("/", (req, res) => {
   res.send("Server QuizMind merge 🔥");
 });
 
-// generate quiz
+/* ================= GENERATE QUIZ ================= */
 app.post("/generate-quiz", async (req, res) => {
   try {
     const { text } = req.body;
 
-    if (!text || !text.trim()) {
+    if (!text) {
       return res.status(400).json({ error: "Lipsește textul." });
     }
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `
-Generează un quiz în limba română în format JSON STRICT.
+    const completion = await openai.responses.create({
+      model: "gpt-4.1-mini",
+      input: `
+Generează un quiz în română.
 
-Structura trebuie să fie EXACT:
+Returnează STRICT JSON:
 
 {
   "titlu": "string",
   "intrebari": [
     {
       "intrebare": "string",
-      "variante": ["A", "B", "C", "D"],
+      "variante": ["A","B","C","D"],
       "corect": "A",
       "explicatie": "string"
     }
@@ -69,40 +58,35 @@ Structura trebuie să fie EXACT:
 
 Reguli:
 - maxim 5 întrebări
-- întrebări clare și utile
-- explicații scurte și simple
 - fără text în afara JSON
+
+Input utilizator:
+${text}
 `
-        },
-        {
-          role: "user",
-          content: text
-        }
-      ]
     });
 
-    const content = completion.choices[0].message.content;
+    const content = completion.output_text;
 
     let result;
 
     try {
       result = JSON.parse(content);
     } catch (e) {
-      console.error("JSON invalid de la OpenAI:", content);
+      console.error("JSON invalid:", content);
       return res.status(500).json({ error: "JSON invalid de la AI" });
     }
 
     res.json(result);
 
-  } catch (error) {
-    console.error("EROARE SERVER:", error);
-    res.status(500).json({ error: "Eroare la generare quiz" });
+  } catch (err) {
+    console.error("EROARE:", err);
+    res.status(500).json({ error: "Eroare server" });
   }
 });
 
-/* ================= PORT (IMPORTANT RAILWAY) ================= */
+/* ================= PORT ================= */
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Server pornit pe portul ${PORT}`);
+  console.log("Server pornit pe portul " + PORT);
 });
