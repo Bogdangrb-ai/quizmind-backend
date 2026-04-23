@@ -1,20 +1,12 @@
-import express from "express";
+import http from "http";
 
-const app = express();
+const port = process.env.PORT || 3000;
 
-app.get("/", (req, res) => {
-  res.status(200).json({
-    ok: true,
-    message: "Server QuizMind merge"
-  });
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok: true, message: "minimal ok" }));
 });
 
-app.get("/health", (req, res) => {
-  res.status(200).send("ok");
-});
-
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server pornit pe portul ${PORT}`);
+server.listen(port, "0.0.0.0", () => {
+  console.log(`HTTP server pornit pe portul ${port}`);
 });
