@@ -8,6 +8,7 @@ dotenv.config();
 
 const app = express();
 
+/* ================= CORS ================= */
 app.use(cors({
   origin: [
     "https://grey-pheasant-306609.hostingersite.com",
@@ -19,16 +20,22 @@ app.use(cors({
 }));
 
 app.options("*", cors());
+
 app.use(bodyParser.json());
 
+/* ================= OPENAI ================= */
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+/* ================= ROUTES ================= */
+
+// test route
 app.get("/", (req, res) => {
   res.send("Server QuizMind merge 🔥");
 });
 
+// generate quiz
 app.post("/generate-quiz", async (req, res) => {
   try {
     const { text } = req.body;
@@ -60,82 +67,40 @@ Structura trebuie să fie EXACT:
   ]
 }
 
-Reguli importante:
-- generează exact 5 întrebări
-- fiecare întrebare trebuie să aibă exact 4 variante
-- răspunsul corect trebuie să fie doar una dintre literele: "A", "B", "C", "D"
-- întrebările trebuie să fie clare, naturale și fără ambiguitate
-- variantele greșite trebuie să fie plauzibile, nu absurde
-- evită să repeți aceeași idee în mai multe întrebări
-- amestecă întrebări de definiție cu întrebări de aplicare și înțelegere
-- explicațiile trebuie să fie scurte, clare și utile
-- nu adăuga text în afara JSON-ului
-- nu folosi markdown
-- nu folosi blocuri de cod
+Reguli:
+- maxim 5 întrebări
+- întrebări clare și utile
+- explicații scurte și simple
+- fără text în afara JSON
 `
         },
         {
           role: "user",
           content: text
         }
-      ],
-      temperature: 0.7
+      ]
     });
 
-    const raw = completion.choices?.[0]?.message?.content;
-
-    if (!raw) {
-      return res.status(500).json({ error: "AI-ul nu a returnat conținut." });
-    }
+    const content = completion.choices[0].message.content;
 
     let result;
 
     try {
-      result = JSON.parse(raw);
-    } catch (parseError) {
-      console.error("JSON invalid de la OpenAI:", raw);
-      return res.status(500).json({ error: "AI-ul nu a returnat JSON valid." });
+      result = JSON.parse(content);
+    } catch (e) {
+      console.error("JSON invalid de la OpenAI:", content);
+      return res.status(500).json({ error: "JSON invalid de la AI" });
     }
 
-    if (!result || !Array.isArray(result.intrebari) || result.intrebari.length === 0) {
-      return res.status(500).json({ error: "Format quiz invalid." });
-    }
-
-    const cleaned = {
-      titlu: typeof result.titlu === "string" && result.titlu.trim()
-        ? result.titlu.trim()
-        : "Quiz generat",
-      intrebari: result.intrebari.slice(0, 5).map((q, index) => {
-        const variante = Array.isArray(q.variante) ? q.variante.slice(0, 4) : [];
-        const corect = ["A", "B", "C", "D"].includes(String(q.corect).toUpperCase())
-          ? String(q.corect).toUpperCase()
-          : "A";
-
-        while (variante.length < 4) {
-          variante.push(`Variantă ${String.fromCharCode(65 + variante.length)}`);
-        }
-
-        return {
-          intrebare: typeof q.intrebare === "string" && q.intrebare.trim()
-            ? q.intrebare.trim()
-            : `Întrebarea ${index + 1}`,
-          variante,
-          corect,
-          explicatie: typeof q.explicatie === "string" && q.explicatie.trim()
-            ? q.explicatie.trim()
-            : "Aceasta este varianta corectă pe baza cerinței."
-        };
-      })
-    };
-
-    res.json(cleaned);
+    res.json(result);
 
   } catch (error) {
-    console.error("Eroare server:", error);
+    console.error("EROARE SERVER:", error);
     res.status(500).json({ error: "Eroare la generare quiz" });
   }
 });
 
+/* ================= PORT (IMPORTANT RAILWAY) ================= */
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
