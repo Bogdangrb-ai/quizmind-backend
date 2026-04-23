@@ -19,7 +19,6 @@ app.use(cors({
 }));
 
 app.options("*", cors());
-
 app.use(bodyParser.json());
 
 const openai = new OpenAI({
@@ -61,32 +60,84 @@ Structura trebuie să fie EXACT:
   ]
 }
 
-Reguli:
-- maxim 5 întrebări
-- întrebări clare, utile
-- explicații simple
-- fără text în afara JSON
+Reguli importante:
+- generează exact 5 întrebări
+- fiecare întrebare trebuie să aibă exact 4 variante
+- răspunsul corect trebuie să fie doar una dintre literele: "A", "B", "C", "D"
+- întrebările trebuie să fie clare, naturale și fără ambiguitate
+- variantele greșite trebuie să fie plauzibile, nu absurde
+- evită să repeți aceeași idee în mai multe întrebări
+- amestecă întrebări de definiție cu întrebări de aplicare și înțelegere
+- explicațiile trebuie să fie scurte, clare și utile
+- nu adăuga text în afara JSON-ului
+- nu folosi markdown
+- nu folosi blocuri de cod
 `
         },
         {
           role: "user",
           content: text
         }
-      ]
+      ],
+      temperature: 0.7
     });
 
-    const result = JSON.parse(completion.choices[0].message.content);
+    const raw = completion.choices?.[0]?.message?.content;
 
-    res.json(result);
+    if (!raw) {
+      return res.status(500).json({ error: "AI-ul nu a returnat conținut." });
+    }
+
+    let result;
+
+    try {
+      result = JSON.parse(raw);
+    } catch (parseError) {
+      console.error("JSON invalid de la OpenAI:", raw);
+      return res.status(500).json({ error: "AI-ul nu a returnat JSON valid." });
+    }
+
+    if (!result || !Array.isArray(result.intrebari) || result.intrebari.length === 0) {
+      return res.status(500).json({ error: "Format quiz invalid." });
+    }
+
+    const cleaned = {
+      titlu: typeof result.titlu === "string" && result.titlu.trim()
+        ? result.titlu.trim()
+        : "Quiz generat",
+      intrebari: result.intrebari.slice(0, 5).map((q, index) => {
+        const variante = Array.isArray(q.variante) ? q.variante.slice(0, 4) : [];
+        const corect = ["A", "B", "C", "D"].includes(String(q.corect).toUpperCase())
+          ? String(q.corect).toUpperCase()
+          : "A";
+
+        while (variante.length < 4) {
+          variante.push(`Variantă ${String.fromCharCode(65 + variante.length)}`);
+        }
+
+        return {
+          intrebare: typeof q.intrebare === "string" && q.intrebare.trim()
+            ? q.intrebare.trim()
+            : `Întrebarea ${index + 1}`,
+          variante,
+          corect,
+          explicatie: typeof q.explicatie === "string" && q.explicatie.trim()
+            ? q.explicatie.trim()
+            : "Aceasta este varianta corectă pe baza cerinței."
+        };
+      })
+    };
+
+    res.json(cleaned);
 
   } catch (error) {
-    console.error(error);
+    console.error("Eroare server:", error);
     res.status(500).json({ error: "Eroare la generare quiz" });
   }
 });
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Server pornit pe http://localhost:${PORT}`);
+  console.log(`Server pornit pe portul ${PORT}`);
 });
