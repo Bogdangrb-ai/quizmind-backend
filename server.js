@@ -2,29 +2,29 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
+import multer from "multer";
+import pdfParse from "pdf-parse";
 
 dotenv.config();
 
 const app = express();
 
-/* ================= CORS ================= */
-/* Poți restrânge mai târziu. Acum e mai sigur pentru testare live. */
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 
-/* ================= OPENAI ================= */
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 12 * 1024 * 1024
+  }
+});
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-/* ================= MEMORIE TEMPORARĂ =================
-   Ține minte ultimele întrebări pe subiect/context.
-   Nu e permanentă între redeploy-uri, dar e foarte bună pentru MVP.
-*/
 const recentQuestionsMemory = new Map();
 const MAX_MEMORY_PER_TOPIC = 24;
-
-/* ================= HELPERS ================= */
 
 function normalizeString(str = "") {
   return String(str)
@@ -245,9 +245,7 @@ Adaptare pentru mod General:
 
 function buildRecentQuestionsBlock(recentQuestions) {
   if (!recentQuestions.length) {
-    return `
-Nu există întrebări recente salvate pentru acest subiect.
-`;
+    return `Nu există întrebări recente salvate pentru acest subiect.`;
   }
 
   return `
@@ -293,10 +291,7 @@ Reguli OBLIGATORII:
 - evită întrebările prea triviale, prea evidente sau prost formulate
 - explicațiile trebuie să fie scurte, corecte și utile
 - nu repeta aceeași idee în mai multe întrebări din același quiz
-- dacă subiectul permite, combină:
-  - definiție
-  - înțelegere
-  - aplicare
+- dacă subiectul permite, combină definiție, înțelegere și aplicare
 - menține dificultatea potrivită cererii utilizatorului
 - concentrează-te strict pe materia și cerința utilizatorului
 
@@ -324,6 +319,49 @@ ${userText}
 `;
 }
 
+async function generateQuizFromText(userText) {
+  const requestedCount = extractRequestedCount(userText);
+  const memoryKey = buildMemoryKey(userText);
+  const recentQuestions = getRecentQuestionsForKey(memoryKey);
+
+  const completion = await openai.responses.create({
+    model: "gpt-4.1-mini",
+    input: buildPrompt(userText, recentQuestions, requestedCount)
+  });
+
+  const content = completion.output_text;
+  const parsed = safeParseJSON(content);
+
+  if (!parsed) {
+    console.error("JSON invalid de la AI:", content);
+    throw new Error("JSON invalid de la AI");
+  }
+
+  const cleaned = validateAndCleanQuiz(parsed, requestedCount);
+
+  if (!cleaned) {
+    console.error("Quiz invalid după validare:", parsed);
+    throw new Error("Quiz invalid de la AI");
+  }
+
+  saveRecentQuestionsForKey(
+    memoryKey,
+    cleaned.intrebari.map((q) => q.intrebare)
+  );
+
+  return cleaned;
+}
+
+async function extractTextFromPdfBuffer(buffer) {
+  try {
+    const result = await pdfParse(buffer);
+    return String(result.text || "").trim();
+  } catch (error) {
+    console.error("Eroare citire PDF:", error);
+    throw new Error("Nu am putut citi PDF-ul. Dacă are parolă sau este scanat, va trebui suport special.");
+  }
+}
+
 /* ================= ROUTE TEST ================= */
 
 app.get("/", (req, res) => {
@@ -337,7 +375,7 @@ app.get("/health", (req, res) => {
   res.status(200).send("ok");
 });
 
-/* ================= GENERARE QUIZ ================= */
+/* ================= GENERARE QUIZ DIN TEXT ================= */
 
 app.post("/generate-quiz", async (req, res) => {
   try {
@@ -347,40 +385,81 @@ app.post("/generate-quiz", async (req, res) => {
       return res.status(400).json({ error: "Lipsește textul." });
     }
 
-    const userText = String(text).trim();
-    const requestedCount = extractRequestedCount(userText);
-    const memoryKey = buildMemoryKey(userText);
-    const recentQuestions = getRecentQuestionsForKey(memoryKey);
-
-    const completion = await openai.responses.create({
-      model: "gpt-4.1-mini",
-      input: buildPrompt(userText, recentQuestions, requestedCount)
-    });
-
-    const content = completion.output_text;
-    const parsed = safeParseJSON(content);
-
-    if (!parsed) {
-      console.error("JSON invalid de la AI:", content);
-      return res.status(500).json({ error: "JSON invalid de la AI" });
-    }
-
-    const cleaned = validateAndCleanQuiz(parsed, requestedCount);
-
-    if (!cleaned) {
-      console.error("Quiz invalid după validare:", parsed);
-      return res.status(500).json({ error: "Quiz invalid de la AI" });
-    }
-
-    saveRecentQuestionsForKey(
-      memoryKey,
-      cleaned.intrebari.map((q) => q.intrebare)
-    );
-
+    const cleaned = await generateQuizFromText(String(text).trim());
     return res.status(200).json(cleaned);
   } catch (error) {
     console.error("EROARE SERVER:", error);
-    return res.status(500).json({ error: "Eroare la generare quiz" });
+    return res.status(500).json({ error: error.message || "Eroare la generare quiz" });
+  }
+});
+
+/* ================= GENERARE QUIZ DIN PDF ================= */
+
+app.post("/upload-quiz", upload.single("file"), async (req, res) => {
+  try {
+    const file = req.file;
+    const {
+      title = "",
+      subject = "General",
+      level = "General",
+      count = "5 întrebări",
+      mode = "Învățare",
+      focus = "",
+      pdfPassword = ""
+    } = req.body;
+
+    if (!file) {
+      return res.status(400).json({ error: "Lipsește fișierul PDF." });
+    }
+
+    const fileName = String(file.originalname || "").toLowerCase();
+
+    if (!fileName.endsWith(".pdf") && file.mimetype !== "application/pdf") {
+      return res.status(400).json({ error: "Momentan acceptăm doar PDF-uri pentru upload real." });
+    }
+
+    if (pdfPassword && pdfPassword.trim()) {
+      return res.status(400).json({
+        error: "PDF-urile cu parolă au nevoie de suport special. Avem câmpul pregătit, dar activăm citirea cu parolă în pasul următor."
+      });
+    }
+
+    const extractedText = await extractTextFromPdfBuffer(file.buffer);
+
+    if (!extractedText || extractedText.length < 250) {
+      return res.status(400).json({
+        error: "PDF-ul nu are suficient text detectabil. Dacă este scanat sau poză, va fi nevoie de OCR."
+      });
+    }
+
+    const limitedText = extractedText.slice(0, 18000);
+
+    const finalPrompt = `
+Titlu quiz: ${title || "Fără titlu"}
+Materie / domeniu: ${subject || "General"}
+Nivel: ${level}
+Număr de întrebări: ${count}
+Mod: ${mode}
+Sursă: PDF încărcat
+
+Context utilizator:
+- Vrea întrebări relevante și utile pentru învățare reală
+- Vrea dificultate adaptată nivelului ales
+- Vrea întrebări potrivite pentru modul ales
+- Evită întrebările banale, repetitive sau ambigue
+
+Cerință detaliată:
+${focus || "Generează un quiz relevant pe baza PDF-ului."}
+
+Text extras din PDF:
+${limitedText}
+    `.trim();
+
+    const cleaned = await generateQuizFromText(finalPrompt);
+    return res.status(200).json(cleaned);
+  } catch (error) {
+    console.error("EROARE UPLOAD PDF:", error);
+    return res.status(500).json({ error: error.message || "Eroare la procesarea PDF-ului" });
   }
 });
 
