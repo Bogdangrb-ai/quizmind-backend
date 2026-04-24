@@ -374,7 +374,12 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
   res.status(200).send("ok");
 });
-
+app.get("/version", (req, res) => {
+  res.json({
+    version: "upload-quiz-active-v1",
+    hasUploadQuiz: true
+  });
+});
 /* ================= GENERARE QUIZ DIN TEXT ================= */
 
 app.post("/generate-quiz", async (req, res) => {
